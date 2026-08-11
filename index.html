@@ -136,6 +136,7 @@
         <span id="toggle-to-signup">Belum punya akun? <a onclick="showSignupMode()">Daftar di sini</a></span>
         <span id="toggle-to-login" style="display:none">Sudah punya akun? <a onclick="showLoginMode()">Masuk di sini</a></span>
       </div>
+      <div id="debug-status" style="margin-top:14px;font-size:10.5px;color:var(--faint);text-align:center">Memeriksa skrip…</div>
     </div>
   </div>
 </div>
@@ -225,6 +226,14 @@
 </div>
 
 <script>
+window.onerror = function(msg, source, lineno){
+  alert("Terjadi error JavaScript di baris " + lineno + ":\n" + msg);
+};
+window.addEventListener('unhandledrejection', function(e){
+  alert("Terjadi error (promise): " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+});
+</script>
+<script>
 /* ============================================================
    KONFIGURASI SUPABASE — isi dua baris di bawah ini
    Ambil dari: Supabase Dashboard > Project Settings > API
@@ -236,6 +245,8 @@ const SUPABASE_ANON_KEY = "sb_publishable_mZ7sZEtPyvFeU8o2XFenLQ_-kN0xHCh";
 let supabase;
 if (SUPABASE_URL.startsWith("GANTI") || SUPABASE_ANON_KEY.startsWith("GANTI")) {
   document.getElementById('config-warning').style.display = 'block';
+} else if (!window.supabase) {
+  alert("Library Supabase gagal dimuat dari CDN. Cek koneksi internet kamu, atau coba jaringan WiFi/data lain.");
 } else {
   try {
     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -243,13 +254,6 @@ if (SUPABASE_URL.startsWith("GANTI") || SUPABASE_ANON_KEY.startsWith("GANTI")) {
     alert("Gagal membuat koneksi Supabase: " + e.message);
   }
 }
-
-window.onerror = function(msg, source, lineno){
-  alert("Terjadi error di baris " + lineno + ":\n" + msg);
-};
-window.addEventListener('unhandledrejection', function(e){
-  alert("Terjadi error (promise): " + (e.reason && e.reason.message ? e.reason.message : e.reason));
-});
 
 let currentUser = null;
 let isSignupMode = false;
@@ -384,4 +388,116 @@ async function addPolaDinas(){
 }
 
 async function deletePolaDinas(id){
-  if(!confirm('Hapus
+  if(!confirm('Hapus pola dinas ini?')) return;
+  await supabase.from('pola_dinas').delete().eq('id', id);
+  loadPolaDinas();
+}
+
+async function loadPolaDinas(){
+  const el = document.getElementById('poladinas-list');
+  const { data, error } = await supabase.from('pola_dinas').select('*').order('created_at', {ascending:false});
+  if(error){ el.innerHTML = '<div class="empty-state">Gagal memuat: '+error.message+'</div>'; return; }
+  if(!data || data.length===0){ el.innerHTML = '<div class="empty-state">Belum ada pola dinas.</div>'; return; }
+  let html = '<table class="data-table"><thead><tr><th>Nama Pola</th><th>Siklus (hari)</th><th>Pola</th><th></th></tr></thead><tbody>';
+  data.forEach(p=>{
+    html += `<tr><td>${escapeHtml(p.nama_pola)}</td><td class="mono">${p.panjang_siklus}</td>
+      <td class="mono">${(p.definisi_siklus||[]).join(' ')}</td>
+      <td><button class="btn-danger" onclick="deletePolaDinas('${p.id}')">Hapus</button></td></tr>`;
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  fillPolaSelect(data);
+}
+
+/* ---------- Penugasan Roster ---------- */
+function fillKaryawanSelect(data){
+  const sel = document.getElementById('r-karyawan');
+  sel.innerHTML = data.map(k=>`<option value="${k.id}">${escapeHtml(k.nama)}</option>`).join('');
+}
+function fillPolaSelect(data){
+  const sel = document.getElementById('r-pola');
+  window._polaCache = data;
+  sel.innerHTML = data.map(p=>`<option value="${p.id}">${escapeHtml(p.nama_pola)}</option>`).join('');
+}
+
+async function addPenugasan(){
+  const karyawan_id = document.getElementById('r-karyawan').value;
+  const pola_dinas_id = document.getElementById('r-pola').value;
+  const tanggal = document.getElementById('r-tanggal').value;
+  if(!karyawan_id || !pola_dinas_id || !tanggal){ alert('Lengkapi semua field.'); return; }
+  const { error } = await supabase.from('penugasan_roster').insert({
+    karyawan_id, pola_dinas_id, tanggal_mulai_siklus: tanggal, aktif: true
+  });
+  if(error){ alert('Gagal simpan: ' + error.message); return; }
+  loadRosterView();
+}
+
+async function loadRosterView(){
+  const el = document.getElementById('roster-view');
+  el.className = 'loading'; el.textContent = 'Memuat data…';
+
+  const { data: penugasan, error } = await supabase
+    .from('penugasan_roster')
+    .select('*, karyawan(nama), pola_dinas(nama_pola, panjang_siklus, definisi_siklus)')
+    .eq('aktif', true);
+
+  if(error){ el.className=''; el.innerHTML = '<div class="empty-state">Gagal memuat: '+error.message+'</div>'; return; }
+  if(!penugasan || penugasan.length===0){ el.className=''; el.innerHTML = '<div class="empty-state">Belum ada penugasan roster.</div>'; return; }
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const days = [];
+  for(let i=0;i<14;i++){
+    const d = new Date(today);
+    d.setDate(d.getDate()+i);
+    days.push(d);
+  }
+
+  let html = '<table class="data-table"><thead><tr><th>Karyawan</th>';
+  days.forEach(d=>{ html += `<th class="mono">${d.getDate()}/${d.getMonth()+1}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  penugasan.forEach(p=>{
+    if(!p.pola_dinas) return;
+    html += `<tr><td>${escapeHtml(p.karyawan ? p.karyawan.nama : '-')}</td>`;
+    const mulai = new Date(p.tanggal_mulai_siklus);
+    mulai.setHours(0,0,0,0);
+    const siklus = p.pola_dinas.definisi_siklus || [];
+    const panjang = p.pola_dinas.panjang_siklus || siklus.length;
+    days.forEach(d=>{
+      const selisihHari = Math.floor((d - mulai) / 86400000);
+      let kode = '-';
+      if(selisihHari >= 0 && panjang > 0){
+        const idx = selisihHari % panjang;
+        kode = siklus[idx] || '-';
+      }
+      const isOff = (kode === 'L' || kode === 'OFF');
+      html += `<td><span class="cell ${isOff ? 'cell-off' : 'cell-kerja'}">${escapeHtml(kode)}</span></td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  el.className = '';
+  el.innerHTML = html;
+}
+
+function escapeHtml(str){
+  if(str === null || str === undefined) return '';
+  return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+/* ---------- Cek sesi login saat halaman dibuka ---------- */
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const dbg = document.getElementById('debug-status');
+  if(dbg){
+    if(!window.supabase){ dbg.textContent = '⚠ Library Supabase tidak termuat (cek koneksi internet)'; dbg.style.color = 'var(--red)'; }
+    else if(!supabase){ dbg.textContent = '⚠ Koneksi Supabase gagal dibuat'; dbg.style.color = 'var(--red)'; }
+    else { dbg.textContent = '✓ Skrip & koneksi Supabase siap'; dbg.style.color = 'var(--green)'; }
+  }
+  if(!supabase) return;
+  const { data } = await supabase.auth.getSession();
+  if(data.session){ await onLoggedIn(data.session.user); }
+});
+</script>
+</body>
+</html>
