@@ -6,7 +6,8 @@
 <title>SIGAP — Sistem Roster Tambang</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" async onerror="document.getElementById('cdn-fallback').src='https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js'"></script>
+<script id="cdn-fallback" async></script>
 <style>
   :root{
     --bg:#F4F6F8; --panel:#FFFFFF; --panel-raised:#F0F3F6; --border:#E3E8ED;
@@ -232,8 +233,7 @@ window.onerror = function(msg, source, lineno){
 window.addEventListener('unhandledrejection', function(e){
   alert("Terjadi error (promise): " + (e.reason && e.reason.message ? e.reason.message : e.reason));
 });
-</script>
-<script>
+
 /* ============================================================
    KONFIGURASI SUPABASE — isi dua baris di bawah ini
    Ambil dari: Supabase Dashboard > Project Settings > API
@@ -243,18 +243,39 @@ const SUPABASE_ANON_KEY = "sb_publishable_mZ7sZEtPyvFeU8o2XFenLQ_-kN0xHCh";
 /* ============================================================ */
 
 let sb;
-if (SUPABASE_URL.startsWith("GANTI") || SUPABASE_ANON_KEY.startsWith("GANTI")) {
-  document.getElementById('config-warning').style.display = 'block';
-} else if (!window.supabase) {
-  alert("Library Supabase gagal dimuat dari CDN. Cek koneksi internet kamu, atau coba jaringan WiFi/data lain.");
-} else {
-  try {
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  } catch(e){
-    alert("Gagal membuat koneksi Supabase: " + e.message);
-  }
-}
 
+/* Library Supabase dimuat secara async (tidak memblokir halaman).
+   Kita polling sampai siap, dengan batas waktu, supaya halaman
+   tidak "Memuat..." selamanya kalau koneksi lambat/putus. */
+function initSupabaseWhenReady(callback){
+  if (SUPABASE_URL.startsWith("GANTI") || SUPABASE_ANON_KEY.startsWith("GANTI")) {
+    const w = document.getElementById('config-warning');
+    if(w) w.style.display = 'block';
+    callback(false);
+    return;
+  }
+  const startTime = Date.now();
+  const timeoutMs = 15000;
+  (function poll(){
+    if (window.supabase) {
+      try {
+        sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        callback(true);
+      } catch(e){
+        alert("Gagal membuat koneksi Supabase: " + e.message);
+        callback(false);
+      }
+      return;
+    }
+    if (Date.now() - startTime > timeoutMs) {
+      callback(false);
+      return;
+    }
+    setTimeout(poll, 250);
+  })();
+}
+</script>
+<script>
 let currentUser = null;
 let isSignupMode = false;
 
@@ -365,18 +386,4 @@ async function loadKaryawan(){
   data.forEach(k=>{
     html += `<tr><td>${escapeHtml(k.nama)}</td><td class="mono">${escapeHtml(k.nip||'-')}</td><td>${escapeHtml(k.jabatan||'-')}</td>
       <td><span class="tag tag-${k.status}">${k.status}</span></td>
-      <td><button class="btn-danger" onclick="deleteKaryawan('${k.id}')">Hapus</button></td></tr>`;
-  });
-  html += '</tbody></table>';
-  el.innerHTML = html;
-  fillKaryawanSelect(data);
-}
-
-/* ---------- Pola Dinas ---------- */
-async function addPolaDinas(){
-  const nama = document.getElementById('p-nama').value.trim();
-  const panjang = parseInt(document.getElementById('p-panjang').value);
-  const def = document.getElementById('p-definisi').value.trim();
-  if(!nama || !panjang || !def){ alert('Lengkapi semua field pola dinas.'); return; }
-  const arr = def.split(',').map(s=>s.trim()).filter(Boolean);
-  const { error } = await sb.from('pola_dinas').insert({ nama_pola: nama, panjang_siklus: p
+      <td><button class="btn-danger" onclick="deleteKaryawan('${k.id}
