@@ -237,8 +237,19 @@ let supabase;
 if (SUPABASE_URL.startsWith("GANTI") || SUPABASE_ANON_KEY.startsWith("GANTI")) {
   document.getElementById('config-warning').style.display = 'block';
 } else {
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  try {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch(e){
+    alert("Gagal membuat koneksi Supabase: " + e.message);
+  }
 }
+
+window.onerror = function(msg, source, lineno){
+  alert("Terjadi error di baris " + lineno + ":\n" + msg);
+};
+window.addEventListener('unhandledrejection', function(e){
+  alert("Terjadi error (promise): " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+});
 
 let currentUser = null;
 let isSignupMode = false;
@@ -373,12 +384,4 @@ async function addPolaDinas(){
 }
 
 async function deletePolaDinas(id){
-  if(!confirm('Hapus pola dinas ini?')) return;
-  await supabase.from('pola_dinas').delete().eq('id', id);
-  loadPolaDinas();
-}
-
-async function loadPolaDinas(){
-  const el = document.getElementById('poladinas-list');
-  const { data, error } = await supabase.from('pola_dinas').select('*').order('created_at', {ascending:false});
-  if(error){ el.innerHTML = '<div class="empty-state"
+  if(!confirm('Hapus
